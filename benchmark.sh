@@ -45,7 +45,7 @@ if [ "$system" == "nacho" ]; then
 elif [ "$system" == "nacho-write-through" ]; then
     plugin="custom_cache_plugin.so"
     log_file="$LOGDIR/write-through-$bench"
-    extra_args="-a enable-pw-bit=1 -a enable-stack-tracking=0 -a enable-write-through=1"
+    extra_args="-a enable-pw-bit=1 -a enable-stack-tracking=2 -a enable-write-through=1"
 elif [ "$system" == "replaycache" ]; then
     plugin="replay_cache_plugin.so"
     log_file="$LOGDIR/replay-cache-$bench"
