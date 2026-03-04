@@ -476,6 +476,8 @@ public:
         }
         cacheNVMwrite(dest_addr, line.blocks.data, line.blocks.size, false);
         clearBit(DIRTY, line);
+        clearBit(READ_DOMINATED,
+                 line); // WAR resolved: NVM now has latest value
       }
 
       p_debug << "Cache write req, written DATA: " << hex << line.blocks.data
@@ -592,6 +594,8 @@ public:
         }
         cacheNVMwrite(dest_addr, line.blocks.data, line.blocks.size, false);
         clearBit(DIRTY, line);
+        clearBit(READ_DOMINATED,
+                 line); // WAR resolved: NVM now has latest value
       }
 
       p_debug << "Cache write req, written DATA: " << hex << line.blocks.data
