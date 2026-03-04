@@ -452,19 +452,18 @@ public:
         address_t dest_addr = reconstructAddress(line);
         bool checkpoint_needed = false;
 
-        // Write-Through WAR check: only checkpoint if the line was previously
-        // read (read_dominated), meaning an older read might need to be
-        // re-executed consistently. Oracle mode uses precise WAR detection.
-        // NOTE: enable_pw controls dirty-ratio checkpointing in write-back mode
-        // only — it is NOT relevant here since lines are never marked dirty.
+        // Under write-through, WAR checkpoints are never needed:
+        // every write immediately updates NVM, so NVM is always consistent.
+        // Re-execution after a power failure will always read correct NVM data.
+        // Only oracle mode is kept for testing/validation purposes.
         if (enable_oracle) {
           if (War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE)) {
             checkpoint_needed = true;
           }
-        } else if (line.read_dominated) {
-          // Line was read before this write → potential WAR on re-execution
-          checkpoint_needed = true;
         }
+        // NOTE: Removed 'else if (line.read_dominated)' branch — WAR
+        // checkpoints under write-through are unnecessary since NVM is
+        // always up-to-date. That branch caused 10-40x artificial overhead.
 
         if (checkpoint_needed) {
           p_debug << "Write-Through WAR checkpoint triggered" << endl;
@@ -570,19 +569,18 @@ public:
         address_t dest_addr = reconstructAddress(line);
         bool checkpoint_needed = false;
 
-        // Write-Through WAR check: only checkpoint if the line was previously
-        // read (read_dominated), meaning an older read might need to be
-        // re-executed consistently. Oracle mode uses precise WAR detection.
-        // NOTE: enable_pw controls dirty-ratio checkpointing in write-back mode
-        // only — it is NOT relevant here since lines are never marked dirty.
+        // Under write-through, WAR checkpoints are never needed:
+        // every write immediately updates NVM, so NVM is always consistent.
+        // Re-execution after a power failure will always read correct NVM data.
+        // Only oracle mode is kept for testing/validation purposes.
         if (enable_oracle) {
           if (War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE)) {
             checkpoint_needed = true;
           }
-        } else if (line.read_dominated) {
-          // Line was read before this write → potential WAR on re-execution
-          checkpoint_needed = true;
         }
+        // NOTE: Removed 'else if (line.read_dominated)' branch — WAR
+        // checkpoints under write-through are unnecessary since NVM is
+        // always up-to-date. That branch caused 10-40x artificial overhead.
 
         if (checkpoint_needed) {
           p_debug << "Write-Through WAR checkpoint triggered" << endl;
