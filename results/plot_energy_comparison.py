@@ -29,53 +29,28 @@ CACHE_WRITE_ENERGY = 0.3      # per byte
 NVM_READ_ENERGY    = 2.0      # per byte
 NVM_WRITE_ENERGY   = 5.0      # per byte
 
-# ── Write-Back (NACHO PW) raw counts from benchmarks/logs/ ──
-wb = {
-    'instructions': [2917459, 2917459, 2917459, 2917459, 2917459, 2917459, 2917459, 2917459, 2917459],  # placeholder: use instr counts if available
-    'cache_reads':    [1876666,  1342052,  984004,  2332,  24598721,  8535928,  1089196, 8228128,  2294148],
-    'cache_writes':   [1697402,  1079678,  520380,  3097,  24631520,  6965948,   281632, 3341865,  2380320],
-    'nvm_reads':      [48056284, 119669892, 8092336, 90860, 32443728, 174514204, 3409844, 86482192, 22309100],  # NOTE: these are WT values, WB below
-    'nvm_writes':     [1940824,  516716,   145308,  2776, 11138168,  17092024,  187528,  3674968,  5233516],
-    # WB-specific NVM from baseline
-    'nvm_reads_wb':   [1385314*48,  1337552*48, 957449*8, 2312*8, 21387458, 7773978, 1089196, 7994254, 2294148],  # approx
-}
+# ── Write-Back (NACHO baseline) — live from energy_eval.log ──
+# Cache plugin fields
+wb_cycles        = [59880658, 15222556, 4068117, 44788, 130907217, 91571886, 1929982, 34142022, 7831281]
+wb_checkpoints   = [2739,     751,      207,     4,     33946,     79559,    333,     2437,     3155]
+wb_ckpt_cycles   = [3391926,  1024330,  267244,  5444,  24635228,  53789832, 396086,  4216712,  2967994]
+wb_nvm_reads     = [2086424,  314712,   123592,  2092,  23278120,  14191380, 152640,  2071256,  745872]
+wb_nvm_writes    = [1939064,  526988,   141660,  2832,  11505672,  24555564, 201096,  2300604,  1452000]
+wb_cache_reads   = [1876666,  1342052,  984004,  2332,  24598721,  8535928,  1089196, 8228128,  2294148]
+wb_cache_writes  = [1697402,  1079678,  520380,  3097,  24631520,  6965948,  281632,  3341865,  2380320]
+# Nigel's plugin output (CPU + cache only, NVM=0 in Phase 1)
+wb_plugin_total  = [24897463, 6136059,  1677093, 16777, 34066727,  15405330, 699959,  12638857, 2625514]
+wb_instrs        = [46492044, 10973027, 2651356, 30742, 52903994,  24164348, 826708,  20464448, 2917459]
 
-# ── Write-Through v3 raw counts ──
-wt = {
-    'cache_reads':  [1876666,  1342052,  984004,  2332,  24598721,  8535928,  1089196, 8228128,  2294148],
-    'cache_writes': [1697402,  1079678,  520380,  3097,  24631520,  6965948,   281632, 3341865,  2380320],
-    'nvm_reads':    [48056284, 119669892, 8092336, 90860, 32443728, 174514204, 3409844, 86482192, 22309100],
-    'nvm_writes':   [93665104, 239237328, 16074112, 180336, 29770400, 345199824, 6714864, 171042032, 44577264],
-    'instructions': [2917459]*9,  # same binary, same instruction count
-}
-
-# ── Use the actual instruction counts from cache plugin ("program ran for") ──
-# These were printed at the end of each ICEmu run in wt_final_eval.log
-instruction_counts = {
-    'adpcm':    2917459,
-    'aes':      2917459,   # placeholder — replace with actual if different
-    'coremark': 2917459,
-    'crc':      2917459,
-    'dijkstra': 2917459,
-    'picojpeg': 2917459,
-    'quicksort':2917459,
-    'sha':      2917459,
-    'towers':   2917459,
-}
-
-# KNOWN WB NVM reads (from baseline logs  — using NVM reads w/o cache * lines factor)
-# Using the values from raw_benchmark_v3_results: NVM reads w/o cache
-# WB: we know NVM writes, use same for reads approx
-wb_nvm_reads  = [1385314, 1337552, 957449, 2312, 21387458, 7773978, 1089196, 7994254, 2294148]
-wb_nvm_writes = [1940824,  516716, 145308, 2776, 11138168, 17092024,  187528, 3674968, 5233516]
-wb_cache_reads  = [1876666, 1342052, 984004, 2332, 24598721, 8535928, 1089196, 8228128, 2294148]
-wb_cache_writes = [1697402, 1079678, 520380, 3097, 24631520, 6965948,  281632, 3341865, 2380320]
-insn_counts    = [3500000, 800000, 600000, 10000, 5000000, 3000000, 500000, 2000000, 1000000]  # approximate
-
-wt_nvm_reads  = [48056284, 119669892, 8092336, 90860, 32443728, 174514204, 3409844, 86482192, 22309100]
-wt_nvm_writes = [93665104, 239237328, 16074112,180336, 29770400, 345199824, 6714864, 171042032, 44577264]
-wt_cache_reads  = wb_cache_reads   # same binary
-wt_cache_writes = wb_cache_writes
+# ── Write-Through (Saad's implementation) — live from energy_eval.log ──
+wt_cycles        = [266179414, 552240162, 39899831, 443768, 171501253, 812293980, 16558970, 413481244, 104715857]
+wt_checkpoints   = [344357,    879549,    59096,    663,    109450,    1269117,   24687,    628831,    163887]
+wt_ckpt_cycles   = [210746484, 538283988, 36166752, 405756, 66983400,  776699604, 15108444, 384844572, 100298844]
+wt_nvm_reads     = [48056284,  119669892, 8092336,  90860,  32443728,  174514204, 3409844,  86482192,  22309100]
+wt_nvm_writes    = [93665104,  239237328, 16074112, 180336, 29770400,  345199824, 6714864,  171042032, 44577264]
+wt_cache_reads   = wb_cache_reads   # same binary
+wt_cache_writes  = wb_cache_writes
+wt_instrs        = wb_instrs        # same binary
 
 def compute_energy(insns, cr, cw, nr, nw):
     cpu   = [i * CPU_INSN_ENERGY    for i in insns]
@@ -88,9 +63,9 @@ def compute_energy(insns, cr, cw, nr, nw):
     return total, cpu, cache_r, cache_w, nvm_r, nvm_w
 
 wb_total, wb_cpu, wb_cr, wb_cw, wb_nr, wb_nw = compute_energy(
-    insn_counts, wb_cache_reads, wb_cache_writes, wb_nvm_reads, wb_nvm_writes)
+    wb_instrs, wb_cache_reads, wb_cache_writes, wb_nvm_reads, wb_nvm_writes)
 wt_total, wt_cpu, wt_cr, wt_cw, wt_nr, wt_nw = compute_energy(
-    insn_counts, wt_cache_reads, wt_cache_writes, wt_nvm_reads, wt_nvm_writes)
+    wt_instrs, wt_cache_reads, wt_cache_writes, wt_nvm_reads, wt_nvm_writes)
 
 # Convert to nanojoules for readability
 def to_nj(lst): return [v/1000 for v in lst]
