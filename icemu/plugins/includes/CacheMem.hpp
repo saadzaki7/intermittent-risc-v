@@ -452,18 +452,18 @@ public:
         address_t dest_addr = reconstructAddress(line);
         bool checkpoint_needed = false;
 
-        // Under write-through, WAR checkpoints are never needed:
-        // every write immediately updates NVM, so NVM is always consistent.
-        // Re-execution after a power failure will always read correct NVM data.
-        // Only oracle mode is kept for testing/validation purposes.
+        // Re-enabled WAR checks: Write-Through MUST checkpoint before
+        // overwriting NVM if the value was read since the last checkpoint,
+        // otherwise intermittent execution idempotence is violated.
         if (enable_oracle) {
           if (War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE)) {
             checkpoint_needed = true;
           }
+        } else if (!enable_pw) {
+          checkpoint_needed = true; // Nacho naive
+        } else if (line.read_dominated) {
+          checkpoint_needed = true; // WAR dependency!
         }
-        // NOTE: Removed 'else if (line.read_dominated)' branch — WAR
-        // checkpoints under write-through are unnecessary since NVM is
-        // always up-to-date. That branch caused 10-40x artificial overhead.
 
         if (checkpoint_needed) {
           p_debug << "Write-Through WAR checkpoint triggered" << endl;
@@ -569,18 +569,18 @@ public:
         address_t dest_addr = reconstructAddress(line);
         bool checkpoint_needed = false;
 
-        // Under write-through, WAR checkpoints are never needed:
-        // every write immediately updates NVM, so NVM is always consistent.
-        // Re-execution after a power failure will always read correct NVM data.
-        // Only oracle mode is kept for testing/validation purposes.
+        // Re-enabled WAR checks: Write-Through MUST checkpoint before
+        // overwriting NVM if the value was read since the last checkpoint,
+        // otherwise intermittent execution idempotence is violated.
         if (enable_oracle) {
           if (War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE)) {
             checkpoint_needed = true;
           }
+        } else if (!enable_pw) {
+          checkpoint_needed = true; // Nacho naive
+        } else if (line.read_dominated) {
+          checkpoint_needed = true; // WAR dependency!
         }
-        // NOTE: Removed 'else if (line.read_dominated)' branch — WAR
-        // checkpoints under write-through are unnecessary since NVM is
-        // always up-to-date. That branch caused 10-40x artificial overhead.
 
         if (checkpoint_needed) {
           p_debug << "Write-Through WAR checkpoint triggered" << endl;
