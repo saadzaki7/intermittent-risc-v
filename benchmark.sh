@@ -55,13 +55,17 @@ else
     exit 1
 fi
 
-# Run the benchmark
+# Run the benchmark (co-loading the energy plugin for energy accounting)
+energy_log_file="$LOGDIR/energy-$system-$bench"
+
 exec run-elf \
     -p $plugin \
+    -p energy_tracking_plugin.so \
     -a hash-method=0 \
     -a cache-size=$cache \
     -a cache-lines=$lines \
     -a custom-cache-log-file=$log_file \
+    -a energy-log-file=$energy_log_file \
     -a opt-level=$opt_lvl \
     $extra_args \
     ./benchmarks/$bench/build-replay-cache-$opt_lvl/$bench.elf
