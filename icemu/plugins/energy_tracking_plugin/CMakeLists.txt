@@ -1,3 +1,4 @@
+
 set(PLUGIN_NAME "energy_tracking_plugin.so")
 
 add_executable(${PLUGIN_NAME}
