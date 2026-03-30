@@ -34,7 +34,7 @@ using namespace icemu;
 
 // TODO: Need a way to get information from other hooks
 class HookInstructionCount : public HookCode {
- private:
+private:
   // Config
   Cache *obj;
   RiscvE21Pipeline Pipeline;
@@ -52,7 +52,7 @@ class HookInstructionCount : public HookCode {
     return 0;
   }
 
- public:
+public:
   uint64_t pc = 0;
   uint64_t count = 0;
 
@@ -71,7 +71,8 @@ class HookInstructionCount : public HookCode {
     reset_cycle_target += on_duration;
 
     // Get the checkpoint cycle threshold
-    auto arg_checkpoint_period = PluginArgumentParsing::GetArguments(getEmulator(), "checkpoint-period=");
+    auto arg_checkpoint_period = PluginArgumentParsing::GetArguments(
+        getEmulator(), "checkpoint-period=");
     if (arg_checkpoint_period.size())
       checkpoint_period = std::stoul(arg_checkpoint_period[0]);
   }
@@ -121,7 +122,8 @@ class HookInstructionCount : public HookCode {
     // Check if we need to create a periodic checkpoint
     // if the checkpoint_period = 0, then there are no periodic checkpoints
     if (checkpoint_period > 0 &&
-        obj->stats.getCurrentCycle() >= (obj->stats.getLastCheckpointCycle() + checkpoint_period)) {
+        obj->stats.getCurrentCycle() >=
+            (obj->stats.getLastCheckpointCycle() + checkpoint_period)) {
       // Create a periodic checkpoint
       obj->createCheckpoint(CHECKPOINT_DUE_TO_PERIOD);
     }
@@ -144,7 +146,7 @@ class HookInstructionCount : public HookCode {
 
 // TODO: Need a way to get information from other hooks
 class MemoryAccess : public HookMemory {
- public:
+public:
   HookInstructionCount *hook_instr_cnt;
 
   // Create cache object
@@ -185,7 +187,8 @@ class MemoryAccess : public HookMemory {
   }
 
   void parseLogArguements() {
-    auto args = PluginArgumentParsing::GetArguments(getEmulator(), "custom-cache-log-file=");
+    auto args = PluginArgumentParsing::GetArguments(getEmulator(),
+                                                    "custom-cache-log-file=");
     if (args.size())
       filename = args[0];
 
@@ -198,6 +201,7 @@ class MemoryAccess : public HookMemory {
     bool enable_pw = false;
     int enable_stack_tracking = 0;
     bool enable_oracle = false;
+    bool enable_write_through = false;
     string arg1 = "cache-size=", arg2 = "cache-lines=", arg3 = "hash-method=",
            arg4 = "enable-pw-bit=", arg5 = "enable-stack-tracking=";
 
@@ -221,27 +225,36 @@ class MemoryAccess : public HookMemory {
     if (arg5_val.size())
       enable_stack_tracking = std::stoul(arg5_val[0]);
 
-    auto arg_oracle_val = PluginArgumentParsing::GetArguments(getEmulator(), "enable-oracle=");
+    auto arg_oracle_val =
+        PluginArgumentParsing::GetArguments(getEmulator(), "enable-oracle=");
     if (arg_oracle_val.size())
       enable_oracle = !!(std::stoul(arg_oracle_val[0]));
+
+    auto arg_wt_val = PluginArgumentParsing::GetArguments(
+        getEmulator(), "enable-write-through=");
+    if (arg_wt_val.size())
+      enable_write_through = !!(std::stoul(arg_wt_val[0]));
 
     // Arguments used in HookInstructionCount
     // TODO: Merge the use, because now we look for them here AND in the
     // HookInstructionCount plugin Here we only need them for the filename
     uint64_t on_duration = 0;
-    auto arg_on_duration = PluginArgumentParsing::GetArguments(getEmulator(), "on-duration=");
+    auto arg_on_duration =
+        PluginArgumentParsing::GetArguments(getEmulator(), "on-duration=");
     if (arg_on_duration.size())
       on_duration = std::stoul(arg_on_duration[0]);
 
     // Get the checkpoint cycle threshold
     uint64_t checkpoint_period = 0;
-    auto arg_checkpoint_period = PluginArgumentParsing::GetArguments(getEmulator(), "checkpoint-period=");
+    auto arg_checkpoint_period = PluginArgumentParsing::GetArguments(
+        getEmulator(), "checkpoint-period=");
     if (arg_checkpoint_period.size())
       checkpoint_period = std::stoul(arg_checkpoint_period[0]);
 
     // Get the optimization level
     std::string opt_level = "-O3";
-    auto arg_opt_level = PluginArgumentParsing::GetArguments(getEmulator(), "opt-level=");
+    auto arg_opt_level =
+        PluginArgumentParsing::GetArguments(getEmulator(), "opt-level=");
     if (arg_opt_level.size())
       opt_level = arg_opt_level[0];
 
@@ -252,7 +265,7 @@ class MemoryAccess : public HookMemory {
     cout << "Lines from outside " << lines << endl;
     CacheObj.init(size, lines, LRU, getEmulator().getMemory(), filename,
                   (enum CacheHashMethod)hash_method, enable_pw,
-                  enable_stack_tracking, enable_oracle);
+                  enable_stack_tracking, enable_oracle, enable_write_through);
   }
 };
 

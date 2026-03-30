@@ -4,7 +4,7 @@
 if [ "$#" -ne 3 ]; then
     echo "Usage: $0 <benchmark> <optimization_level> <system>"
     echo "Example: $0 aes O0 nacho"
-    echo "Systems: nacho, replaycache"
+    echo "Systems: nacho, nacho-write-through, replaycache"
     echo "Important: Please ensure that ICEmu plugins and LLVM toolchain are compiled"
     exit 1
 fi
@@ -33,17 +33,25 @@ cache=512
 lines=2
 on_duration=0
 
+# Log directory
+LOGDIR="/tmp/benchmark-logs"
+mkdir -p $LOGDIR
+
 # Select the appropriate system and plugin
 if [ "$system" == "nacho" ]; then
     plugin="custom_cache_plugin.so"
-    log_file="/tmp/uninstrumented-$bench-log"
-    extra_args="-a enable-pw-bit=1 -a enable-stack-tracking=2"
+    log_file="$LOGDIR/uninstrumented-$bench"
+    extra_args="-a enable-pw-bit=1 -a enable-stack-tracking=2 -a enable-write-through=0"
+elif [ "$system" == "nacho-write-through" ]; then
+    plugin="custom_cache_plugin.so"
+    log_file="$LOGDIR/write-through-$bench"
+    extra_args="-a enable-pw-bit=1 -a enable-stack-tracking=2 -a enable-write-through=1"
 elif [ "$system" == "replaycache" ]; then
     plugin="replay_cache_plugin.so"
-    log_file="/tmp/replay-cache-$bench-log"
+    log_file="$LOGDIR/replay-cache-$bench"
     extra_args="-a writeback-queue-size=8 -a writeback-parallelism=1 -a on-duration=$on_duration"
 else
-    echo "Error: Invalid system '$system'. Choose either 'nacho' or 'replaycache'."
+    echo "Error: Invalid system '$system'. Choose either 'nacho', 'nacho-write-through', or 'replaycache'."
     exit 1
 fi
 
@@ -53,7 +61,7 @@ exec run-elf \
     -a hash-method=0 \
     -a cache-size=$cache \
     -a cache-lines=$lines \
-    -a log-file=$log_file \
+    -a custom-cache-log-file=$log_file \
     -a opt-level=$opt_lvl \
     $extra_args \
     ./benchmarks/$bench/build-replay-cache-$opt_lvl/$bench.elf

@@ -42,7 +42,7 @@ using namespace std;
 using namespace icemu;
 
 class Cache {
- private:
+private:
   Emulator &_emu;
   // Cache metadata
   enum replacement_policy policy;
@@ -69,6 +69,8 @@ class Cache {
 
   bool enable_oracle;
 
+  bool enable_write_through;
+
   enum StackTrackConfig {
     STACK_TRACK_NONE,
     STACK_TRACK_CHECKPOINT,
@@ -79,7 +81,7 @@ class Cache {
   // WAR detect (to check correctness)
   DetectWAR War;
 
- public:
+public:
   // Statistics
   Stats stats;
 
@@ -158,7 +160,8 @@ class Cache {
   void init(uint32_t size, uint32_t ways, enum replacement_policy p,
             icemu::Memory &emu_mem, string filename,
             enum CacheHashMethod hash_method, bool enable_pw,
-            int enable_stack_tracking, bool enable_oracle) {
+            int enable_stack_tracking, bool enable_oracle,
+            bool enable_write_through) {
     // Initialize meta stuffs
     EmuMem = &emu_mem;
     capacity = size;
@@ -169,22 +172,36 @@ class Cache {
     this->hash_method = hash_method;
     this->enable_pw = enable_pw;
     this->enable_oracle = enable_oracle;
+    this->enable_write_through = enable_write_through;
+
+    // Log the active cache policy so runs can be distinguished in output
+    if (enable_write_through) {
+      p_debug << "Cache policy: WRITE-THROUGH (NVM write on every store, no "
+                 "dirty evictions at checkpoint)"
+              << endl;
+      cout << "[Cache] Policy: WRITE-THROUGH" << endl;
+    } else {
+      p_debug << "Cache policy: WRITE-BACK (dirty lines flushed at "
+                 "checkpoint/eviction)"
+              << endl;
+      cout << "[Cache] Policy: WRITE-BACK" << endl;
+    }
 
     switch (enable_stack_tracking) {
-      case 0:
-        this->stackTrackConfig = STACK_TRACK_NONE;
-        p_debug << "STACK_TRACK_NONE" << endl;
-        break;
-      case 1:
-        this->stackTrackConfig = STACK_TRACK_CHECKPOINT;
-        p_debug << "STACK_TRACK_CHECKPOINT" << endl;
-        break;
-      case 2:
-        this->stackTrackConfig = STACK_TRACK_CONTINUOUS;
-        p_debug << "STACK_TRACK_CONTINUOUS" << endl;
-        break;
-      default:
-        assert(false && "Unknown stack tracking level");
+    case 0:
+      this->stackTrackConfig = STACK_TRACK_NONE;
+      p_debug << "STACK_TRACK_NONE" << endl;
+      break;
+    case 1:
+      this->stackTrackConfig = STACK_TRACK_CHECKPOINT;
+      p_debug << "STACK_TRACK_CHECKPOINT" << endl;
+      break;
+    case 2:
+      this->stackTrackConfig = STACK_TRACK_CONTINUOUS;
+      p_debug << "STACK_TRACK_CONTINUOUS" << endl;
+      break;
+    default:
+      assert(false && "Unknown stack tracking level");
     }
 
     if (hash_method == SKEW_ASSOCIATIVE)
@@ -207,7 +224,7 @@ class Cache {
         memset(&line->blocks, 0, sizeof(struct CacheBlock));
         line->valid = false;
         line->read_dominated = false;
-        //line->write_dominated = false;
+        // line->write_dominated = false;
         line->possible_war = false;
         line->dirty = false;
       }
@@ -249,7 +266,8 @@ class Cache {
     req.size = size_req;
     req.value = *value_req;
     req.type = mem_type;
-    req.mem_id.tag = req.addr >> (address_t)(log2(CACHE_BLOCK_SIZE) + log2(no_of_sets));
+    req.mem_id.tag =
+        req.addr >> (address_t)(log2(CACHE_BLOCK_SIZE) + log2(no_of_sets));
     req.mem_id.offset = req.addr & GET_MASK(NUM_BITS(CACHE_BLOCK_SIZE));
     req.mem_id.index =
         (req.addr &
@@ -383,17 +401,20 @@ class Cache {
 
     // It's a hit, but the bits have been cleared by a checkpoint
     // Then we need to update them now
-    //if (line.read_dominated == false && line.write_dominated == false) {
-    if (line.possible_war == false && line.read_dominated == false && line.dirty == false) {
+    // if (line.read_dominated == false && line.write_dominated == false) {
+    if (line.possible_war == false && line.read_dominated == false &&
+        line.dirty == false) {
       updateDetectionBits(&line, req.type, req.size);
 
-      // Here we additionally check for WARs if we are not in oracle mode 
+      // Here we additionally check for WARs if we are not in oracle mode
       // this COULD have been a cache miss. It's a hit because there was
-      // a checkpoint that cleared the bits. If it was a miss (which happens during
-      // the re-execution) it could trigger a WAR. Assume re-execution for this assert.
-      // hash_method check is to only perform this check when running NACHO, not PROWL
-      // PROWL creates a checkpoint for all evictions, so it does not matter
-      if (enable_oracle == false && hash_method == CacheHashMethod::SET_ASSOCIATIVE) {
+      // a checkpoint that cleared the bits. If it was a miss (which happens
+      // during the re-execution) it could trigger a WAR. Assume re-execution
+      // for this assert. hash_method check is to only perform this check when
+      // running NACHO, not PROWL PROWL creates a checkpoint for all evictions,
+      // so it does not matter
+      if (enable_oracle == false &&
+          hash_method == CacheHashMethod::SET_ASSOCIATIVE) {
         auto address = reconstructAddress(req.mem_id.tag, req.mem_id.index);
         bool isWar = War.isWAR(address, 4, req.type);
         ASSERT(isWar == false);
@@ -403,41 +424,78 @@ class Cache {
     // Perform hit actions - note that these are slightly different
     // from putting a new element in an empty cache line
     switch (req.type) {
-      // For a read hit
-      case HookMemory::MEM_READ:
-        stats.incCacheReads(req.size);
-        cost.modifyCost(Pipeline, CACHE_READ, req.size);
-        p_debug << "Cache read req, read DATA: " << line.blocks.data << endl;
-        //p_debug << "RD: " << line.read_dominated
-        //        << " WD: " << line.write_dominated << " PW: " << line.possible_war
-        //        << endl;
-        p_debug << "RD: " << line.read_dominated << " PW: " << line.possible_war << endl;
-        break;
+    // For a read hit
+    case HookMemory::MEM_READ:
+      stats.incCacheReads(req.size);
+      cost.modifyCost(Pipeline, CACHE_READ, req.size);
+      p_debug << "Cache read req, read DATA: " << line.blocks.data << endl;
+      // p_debug << "RD: " << line.read_dominated
+      //         << " WD: " << line.write_dominated << " PW: " <<
+      //         line.possible_war
+      //         << endl;
+      p_debug << "RD: " << line.read_dominated << " PW: " << line.possible_war
+              << endl;
+      break;
 
-      // For a write hit
-      case HookMemory::MEM_WRITE:
+    // For a write hit
+    case HookMemory::MEM_WRITE:
+      if (!enable_write_through) {
         setBit(DIRTY, line);
+      }
 
-        p_debug << "Cache before write: " << hex << line.blocks.data << dec
-                << endl;
+      p_debug << "Cache before write: " << hex << line.blocks.data << dec
+              << endl;
 
-        writeToCache(line);
+      writeToCache(line);
 
-        p_debug << "Cache write req, written DATA: " << hex << line.blocks.data
-                << dec << endl;
-        p_debug << "Data at NVM: " << hex
-                << nvm.localRead(reconstructAddress(line), 4) << dec << endl;
-        p_debug << "Data at EMULATOR: " << hex
-                << nvm.emulatorRead(reconstructAddress(line), 4) << dec << endl;
+      if (enable_write_through) {
+        address_t dest_addr = reconstructAddress(line);
+        bool checkpoint_needed = false;
 
-        //p_debug << "RD: " << line.read_dominated
-        //        << " WD: " << line.write_dominated << " PW: " << line.possible_war
-        //        << endl;
-        p_debug << "RD: " << line.read_dominated << " PW: " << line.possible_war << endl;
+        // Re-enabled WAR checks: Write-Through MUST checkpoint before
+        // overwriting NVM if the value was read since the last checkpoint,
+        // otherwise intermittent execution idempotence is violated.
+        if (enable_oracle) {
+          if (War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE)) {
+            checkpoint_needed = true;
+          }
+        } else if (!enable_pw) {
+          checkpoint_needed = true; // Nacho naive
+        } else if (line.read_dominated) {
+          checkpoint_needed = true; // WAR dependency!
+        }
 
-        stats.incCacheWrites(req.size);
-        cost.modifyCost(Pipeline, CACHE_WRITE, req.size);
-        break;
+        if (checkpoint_needed) {
+          p_debug << "Write-Through WAR checkpoint triggered" << endl;
+          createCheckpoint(CHECKPOINT_DUE_TO_WAR);
+          if (enable_oracle) {
+            bool isWar = War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE);
+            ASSERT(isWar == false);
+          }
+        }
+        cacheNVMwrite(dest_addr, line.blocks.data, line.blocks.size, false);
+        clearBit(DIRTY, line);
+        clearBit(READ_DOMINATED,
+                 line); // WAR resolved: NVM now has latest value
+      }
+
+      p_debug << "Cache write req, written DATA: " << hex << line.blocks.data
+              << dec << endl;
+      p_debug << "Data at NVM: " << hex
+              << nvm.localRead(reconstructAddress(line), 4) << dec << endl;
+      p_debug << "Data at EMULATOR: " << hex
+              << nvm.emulatorRead(reconstructAddress(line), 4) << dec << endl;
+
+      // p_debug << "RD: " << line.read_dominated
+      //         << " WD: " << line.write_dominated << " PW: " <<
+      //         line.possible_war
+      //         << endl;
+      p_debug << "RD: " << line.read_dominated << " PW: " << line.possible_war
+              << endl;
+
+      stats.incCacheWrites(req.size);
+      cost.modifyCost(Pipeline, CACHE_WRITE, req.size);
+      break;
     }
   }
 
@@ -459,60 +517,93 @@ class Cache {
     updateDetectionBits(&line, req.type, req.size);
 
     switch (req.type) {
-      case HookMemory::MEM_READ:
-        // WAR detection (read can never cause WAR, but need it to track writes
-        // later)
+    case HookMemory::MEM_READ:
+      // WAR detection (read can never cause WAR, but need it to track writes
+      // later)
+      War.isWAR(address, 4, HookMemory::MEM_READ);
+
+      // Read the entry from NVM
+      cost.modifyCost(Pipeline, NVM_READ, 4);
+      stats.incNVMReads(4);
+
+      // Write the entry to the cache
+      cost.modifyCost(Pipeline, CACHE_WRITE, 4);
+      stats.incCacheWrites(4);
+
+      // Read the entry from the cache
+      cost.modifyCost(Pipeline, CACHE_READ, 4);
+      stats.incCacheReads(4);
+
+      // We read the whole line
+      line.blocks.size = 4;
+
+      p_debug << "Cache read req, read DATA: " << line.blocks.data << endl;
+      break;
+
+    case HookMemory::MEM_WRITE:
+      if (!enable_write_through) {
+        setBit(DIRTY, line);
+      }
+
+      if (req.size != 4) {
+        // If we don't write a full cache line, we first need to read it to fill
+        // in the missing bytes
         War.isWAR(address, 4, HookMemory::MEM_READ);
 
-        // Read the entry from NVM
+        // Add costs
         cost.modifyCost(Pipeline, NVM_READ, 4);
         stats.incNVMReads(4);
+      }
 
-        // Write the entry to the cache
-        cost.modifyCost(Pipeline, CACHE_WRITE, 4);
-        stats.incCacheWrites(4);
+      // Write the remaining size to the cache
+      cost.modifyCost(Pipeline, CACHE_WRITE, req.size);
+      stats.incCacheWrites(req.size);
 
-        // Read the entry from the cache
-        cost.modifyCost(Pipeline, CACHE_READ, 4);
-        stats.incCacheReads(4);
+      p_debug << "Cache before write: " << hex << line.blocks.data << dec
+              << endl;
 
-        // We read the whole line
-        line.blocks.size = 4;
+      // In case of a write, copy the value from the CPU to the data
+      writeToCache(line);
 
-        p_debug << "Cache read req, read DATA: " << line.blocks.data << endl;
-        break;
+      if (enable_write_through) {
+        address_t dest_addr = reconstructAddress(line);
+        bool checkpoint_needed = false;
 
-      case HookMemory::MEM_WRITE:
-        setBit(DIRTY, line);
-
-        if (req.size != 4) {
-          // If we don't write a full cache line, we first need to read it to fill
-          // in the missing bytes
-          War.isWAR(address, 4, HookMemory::MEM_READ);
-
-          // Add costs
-          cost.modifyCost(Pipeline, NVM_READ, 4);
-          stats.incNVMReads(4);
+        // Re-enabled WAR checks: Write-Through MUST checkpoint before
+        // overwriting NVM if the value was read since the last checkpoint,
+        // otherwise intermittent execution idempotence is violated.
+        if (enable_oracle) {
+          if (War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE)) {
+            checkpoint_needed = true;
+          }
+        } else if (!enable_pw) {
+          checkpoint_needed = true; // Nacho naive
+        } else if (line.read_dominated) {
+          checkpoint_needed = true; // WAR dependency!
         }
 
-        // Write the remaining size to the cache
-        cost.modifyCost(Pipeline, CACHE_WRITE, req.size);
-        stats.incCacheWrites(req.size);
+        if (checkpoint_needed) {
+          p_debug << "Write-Through WAR checkpoint triggered" << endl;
+          createCheckpoint(CHECKPOINT_DUE_TO_WAR);
+          if (enable_oracle) {
+            bool isWar = War.isWAR(dest_addr, 4, HookMemory::MEM_WRITE);
+            ASSERT(isWar == false);
+          }
+        }
+        cacheNVMwrite(dest_addr, line.blocks.data, line.blocks.size, false);
+        clearBit(DIRTY, line);
+        clearBit(READ_DOMINATED,
+                 line); // WAR resolved: NVM now has latest value
+      }
 
-        p_debug << "Cache before write: " << hex << line.blocks.data << dec
-                << endl;
+      p_debug << "Cache write req, written DATA: " << hex << line.blocks.data
+              << dec << endl;
+      p_debug << "Data at NVM: " << hex
+              << nvm.localRead(reconstructAddress(line), 4) << dec << endl;
+      p_debug << "Data at EMULATOR: " << hex
+              << nvm.emulatorRead(reconstructAddress(line), 4) << dec << endl;
 
-        // In case of a write, copy the value from the CPU to the data
-        writeToCache(line);
-
-        p_debug << "Cache write req, written DATA: " << hex << line.blocks.data
-                << dec << endl;
-        p_debug << "Data at NVM: " << hex
-                << nvm.localRead(reconstructAddress(line), 4) << dec << endl;
-        p_debug << "Data at EMULATOR: " << hex
-                << nvm.emulatorRead(reconstructAddress(line), 4) << dec << endl;
-
-        break;
+      break;
     }
   }
 
@@ -577,8 +668,8 @@ class Cache {
       bool possible_war = false;
 
       // Get the set corresponding to the line
-      address_t hashed_index = cacheHash(line->blocks.bits.tag,
-                                         line->blocks.bits.index, hash_method, 0);
+      address_t hashed_index = cacheHash(
+          line->blocks.bits.tag, line->blocks.bits.index, hash_method, 0);
       auto cacheSet = sets.at(hashed_index);
       for (const auto &l : cacheSet.lines) {
         possible_war |= l.possible_war;
@@ -587,18 +678,18 @@ class Cache {
       // Set the bits
       if (possible_war == false && size == 4) {
         // The line is now write dominated
-        //line->write_dominated = true;
+        // line->write_dominated = true;
         line->read_dominated = false;
       } else {
         // The line is now read dominated
-        //line->write_dominated = false;
+        // line->write_dominated = false;
         line->read_dominated = true;
       }
     }
 
     // If the new entry is a read, we always set the Read dominated bit
     else if (new_entry_type == HookMemory::MEM_READ) {
-      //line->write_dominated = false;
+      // line->write_dominated = false;
       line->read_dominated = true;
     }
 
@@ -608,10 +699,16 @@ class Cache {
     }
 
     // Check for unexpected cases:
-    // Note: line->dirty will not be set yet if it's a write, so we use the entry type instead as that will lead to dirty being set or not 
-    // i.e., new_entry_type == HookMemory::MEM_READ means that line->dirty will be false
-    ASSERT((line->possible_war == false && line->read_dominated == false && new_entry_type == HookMemory::MEM_READ) == false); // happens only after a checkpoint
-    ASSERT((line->possible_war == true && line->read_dominated == false && new_entry_type == HookMemory::MEM_READ) == false); // Should never happen
+    // Note: line->dirty will not be set yet if it's a write, so we use the
+    // entry type instead as that will lead to dirty being set or not i.e.,
+    // new_entry_type == HookMemory::MEM_READ means that line->dirty will be
+    // false
+    ASSERT((line->possible_war == false && line->read_dominated == false &&
+            new_entry_type == HookMemory::MEM_READ) ==
+           false); // happens only after a checkpoint
+    ASSERT((line->possible_war == true && line->read_dominated == false &&
+            new_entry_type == HookMemory::MEM_READ) ==
+           false); // Should never happen
   }
 
   /**
@@ -631,19 +728,21 @@ class Cache {
 
     // Perform the eviction based on the policy.
     switch (policy) {
-      case LRU:
-        hashed_index = cacheHash(req.mem_id.tag, req.mem_id.index, SET_ASSOCIATIVE, 0);
-        evicted_line = &(*std::min_element(sets.at(hashed_index).lines.begin(),
-                                           sets.at(hashed_index).lines.end()));
-        break;
-      case MRU:
-        hashed_index = cacheHash(req.mem_id.tag, req.mem_id.index, SET_ASSOCIATIVE, 0);
-        evicted_line = &(*std::max_element(sets.at(hashed_index).lines.begin(),
-                                           sets.at(hashed_index).lines.end()));
-        break;
-      case SKEW:
-        // Perform the cuckoo hashing
-        return cuckooHashing();
+    case LRU:
+      hashed_index =
+          cacheHash(req.mem_id.tag, req.mem_id.index, SET_ASSOCIATIVE, 0);
+      evicted_line = &(*std::min_element(sets.at(hashed_index).lines.begin(),
+                                         sets.at(hashed_index).lines.end()));
+      break;
+    case MRU:
+      hashed_index =
+          cacheHash(req.mem_id.tag, req.mem_id.index, SET_ASSOCIATIVE, 0);
+      evicted_line = &(*std::max_element(sets.at(hashed_index).lines.begin(),
+                                         sets.at(hashed_index).lines.end()));
+      break;
+    case SKEW:
+      // Perform the cuckoo hashing
+      return cuckooHashing();
     }
 
     ASSERT(evicted_line != nullptr);
@@ -659,7 +758,7 @@ class Cache {
 
       // If the line is dirty, it must have either of these bits set
       // The only case where they can NOT be set, is after a checkpoint eviction
-      //ASSERT(evicted_line->read_dominated || evicted_line->write_dominated);
+      // ASSERT(evicted_line->read_dominated || evicted_line->write_dominated);
 
       if (true && (stackTrackConfig == STACK_TRACK_CONTINUOUS) &&
           !stackTracker.isMemoryWriteNeeded(evict_address)) {
@@ -810,16 +909,19 @@ class Cache {
 
     // NVM writes
     stats.incNVMWrites(reg_cp_size);
-    stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
+    stats.incCheckpointCycles(
+        cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
 
     if (double_bufferd_checkpoints) {
       // NVM Read
       stats.incNVMReads(reg_cp_size);
-      stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_READ, reg_cp_size));
+      stats.incCheckpointCycles(
+          cost.modifyCost(Pipeline, NVM_READ, reg_cp_size));
 
       // NVM Write
       stats.incNVMWrites(reg_cp_size);
-      stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
+      stats.incCheckpointCycles(
+          cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
     }
 
     stats.incCheckpoints();
@@ -894,7 +996,8 @@ class Cache {
       uint64_t data = 0;
 
       valueFromEmuMem = readFromCache(
-          nvm.emulatorRead(reconstructAddress(req.mem_id.tag, req.mem_id.index), 4),
+          nvm.emulatorRead(reconstructAddress(req.mem_id.tag, req.mem_id.index),
+                           4),
           req.mem_id.offset, req.size);
 
       /**
@@ -903,7 +1006,8 @@ class Cache {
        * which means that the data has to be there in the cache.
        */
       for (uint32_t i = 0; i < no_of_lines; i++) {
-        address_t hashed_index = cacheHash(req.mem_id.tag, req.mem_id.index, hash_method, i);
+        address_t hashed_index =
+            cacheHash(req.mem_id.tag, req.mem_id.index, hash_method, i);
         CacheLine &line = sets.at(hashed_index).lines[i];
 
         if (line.valid) {
@@ -952,7 +1056,8 @@ class Cache {
 
           // Fetch from local memory
           address_t mem_data = readFromCache(
-              nvm.localRead(reconstructAddress(req.mem_id.tag, req.mem_id.index), 4),
+              nvm.localRead(
+                  reconstructAddress(req.mem_id.tag, req.mem_id.index), 4),
               req.mem_id.offset, req.size);
 
           if (mem_data != valueFromEmuMem) {
@@ -993,7 +1098,7 @@ class Cache {
                 (reconstructAddress(line) | line.blocks.bits.offset)) {
               std::cout << "Clearing a hint!\n";
               clearBit(READ_DOMINATED, line);
-              //clearBit(WRITE_DOMINATED, line);
+              // clearBit(WRITE_DOMINATED, line);
               clearBit(POSSIBLE_WAR, line);
               clearBit(DIRTY, line);
             }
@@ -1019,7 +1124,7 @@ class Cache {
    * @note index is only used for SET ASSOCIATIVE and addr is only used for SKEW
    * ASSOCIATIVE
    */
-//#define PRIME_MOD 524309UL
+// #define PRIME_MOD 524309UL
 #define PRIME_MOD 2148007997UL
   address_t cacheHash(address_t tag, address_t index, enum CacheHashMethod type,
                       uint32_t line_number) {
@@ -1027,28 +1132,28 @@ class Cache {
     address_t hash_addr = reconstructAddress(tag, index);
 
     switch (type) {
-      case SET_ASSOCIATIVE:
-        hash = index;
-        break;
-      case SKEW_ASSOCIATIVE:
-        // Only support 2-way skew associative as of now
-        // PROWL uses a different random hash every time in the form of:
-        //  hash(x) = ((a*x + b) mod p) mod n    where
-        //      a and b are random, chosen at boot
-        //      p is a prime number > the memory size (here total address, so base
-        //      + size) n is the number of sets in the cache
-        //
-        //  In PROWL a and b are randomly generated every run, here we have set
-        //  them constant for repeatability.
-        ASSERT(no_of_lines == 2);
-        if (line_number == 0)
-          hash = ((3 * hash_addr + 0) % PRIME_MOD) % no_of_sets;
-        else
-          hash = ((9 * hash_addr + 3) % PRIME_MOD) % no_of_sets;
-        break;
-      default:
-        // No no, you should not come here
-        ASSERT(false);
+    case SET_ASSOCIATIVE:
+      hash = index;
+      break;
+    case SKEW_ASSOCIATIVE:
+      // Only support 2-way skew associative as of now
+      // PROWL uses a different random hash every time in the form of:
+      //  hash(x) = ((a*x + b) mod p) mod n    where
+      //      a and b are random, chosen at boot
+      //      p is a prime number > the memory size (here total address, so base
+      //      + size) n is the number of sets in the cache
+      //
+      //  In PROWL a and b are randomly generated every run, here we have set
+      //  them constant for repeatability.
+      ASSERT(no_of_lines == 2);
+      if (line_number == 0)
+        hash = ((3 * hash_addr + 0) % PRIME_MOD) % no_of_sets;
+      else
+        hash = ((9 * hash_addr + 3) % PRIME_MOD) % no_of_sets;
+      break;
+    default:
+      // No no, you should not come here
+      ASSERT(false);
     }
 
     return hash;
@@ -1068,16 +1173,19 @@ class Cache {
 
     // NVM writes
     stats.incNVMWrites(reg_cp_size);
-    stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
+    stats.incCheckpointCycles(
+        cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
 
     if (double_bufferd_checkpoints) {
       // NVM Read
       stats.incNVMReads(reg_cp_size);
-      stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_READ, reg_cp_size));
+      stats.incCheckpointCycles(
+          cost.modifyCost(Pipeline, NVM_READ, reg_cp_size));
 
       // NVM Write
       stats.incNVMWrites(reg_cp_size);
-      stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
+      stats.incCheckpointCycles(
+          cost.modifyCost(Pipeline, NVM_WRITE, reg_cp_size));
     }
 
     // Only place where checkpoints are incremented
@@ -1088,18 +1196,18 @@ class Cache {
 
     // Increment based on reasons
     switch (reason) {
-      case CHECKPOINT_DUE_TO_WAR:
-        stats.incCheckpointsDueToWAR();
-        // p_debug << " due to WAR" << endl;
-        break;
-      case CHECKPOINT_DUE_TO_DIRTY:
-        stats.incCheckpointsDueToDirty();
-        // p_debug << " due to ditry ratio" << endl;
-        break;
-      case CHECKPOINT_DUE_TO_PERIOD:
-        stats.incCheckpointsDueToPeriod();
-        // p_debug << " due to period" << endl;
-        break;
+    case CHECKPOINT_DUE_TO_WAR:
+      stats.incCheckpointsDueToWAR();
+      // p_debug << " due to WAR" << endl;
+      break;
+    case CHECKPOINT_DUE_TO_DIRTY:
+      stats.incCheckpointsDueToDirty();
+      // p_debug << " due to ditry ratio" << endl;
+      break;
+    case CHECKPOINT_DUE_TO_PERIOD:
+      stats.incCheckpointsDueToPeriod();
+      // p_debug << " due to period" << endl;
+      break;
     }
 
     // Perform the actual evictions due to checkpoints
@@ -1130,7 +1238,8 @@ class Cache {
   void checkpointWriteMem(CacheLine &l) {
     // Read from Cache
     stats.incCacheCheckpoint(l.blocks.size);
-    stats.incCheckpointCycles(cost.modifyCost(Pipeline, CACHE_READ, l.blocks.size));
+    stats.incCheckpointCycles(
+        cost.modifyCost(Pipeline, CACHE_READ, l.blocks.size));
 
     // Write to NVM stat + Pipeline + Perform the actual write to the memory
     cacheNVMwrite(reconstructAddress(l), l.blocks.data, l.blocks.size, true);
@@ -1138,11 +1247,13 @@ class Cache {
     if (double_bufferd_checkpoints) {
       // Read from NVM + Pipeline
       stats.incNVMReads(l.blocks.size);
-      stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_READ, l.blocks.size));
+      stats.incCheckpointCycles(
+          cost.modifyCost(Pipeline, NVM_READ, l.blocks.size));
 
       // Write to NVM + Pipeline
       stats.incNVMWrites(l.blocks.size);
-      stats.incCheckpointCycles(cost.modifyCost(Pipeline, NVM_READ, l.blocks.size));
+      stats.incCheckpointCycles(
+          cost.modifyCost(Pipeline, NVM_READ, l.blocks.size));
     }
   }
 
@@ -1176,7 +1287,7 @@ class Cache {
 
           // Reset all bits
           clearBit(READ_DOMINATED, l);
-          //clearBit(WRITE_DOMINATED, l);
+          // clearBit(WRITE_DOMINATED, l);
           clearBit(POSSIBLE_WAR, l);
           clearBit(DIRTY, l);
         }
@@ -1201,7 +1312,7 @@ class Cache {
         if (line.valid == true)
           clearBit(VALID, line);
         clearBit(READ_DOMINATED, line);
-        //clearBit(WRITE_DOMINATED, line);
+        // clearBit(WRITE_DOMINATED, line);
         clearBit(POSSIBLE_WAR, line);
         clearBit(DIRTY, line);
       }
@@ -1240,24 +1351,24 @@ class Cache {
    */
   void setBit(enum CacheBits bit, CacheLine &line) {
     switch (bit) {
-      case VALID:
-        line.valid = true;
-        break;
-      case DIRTY:
-        ASSERT(line.valid == true);
-        // Check if not already set, set the bit and update the dirty ratio
-        if (line.dirty == false) {
-          line.dirty = true;
-          dirty_ratio = (dirty_ratio * (capacity / CACHE_BLOCK_SIZE) + 1) /
-                        (capacity / CACHE_BLOCK_SIZE);
-          ASSERT(dirty_ratio <= 1.0);
-        }
-        // p_debug << "Setting dirty bit: " << line.blocks.set_bits << " to " <<
-        // dirty_ratio << endl;
-        break;
-      default:
-        p_err << "Only VALID and DIRTY should be set through here" << endl;
-        ASSERT(false);
+    case VALID:
+      line.valid = true;
+      break;
+    case DIRTY:
+      ASSERT(line.valid == true);
+      // Check if not already set, set the bit and update the dirty ratio
+      if (line.dirty == false) {
+        line.dirty = true;
+        dirty_ratio = (dirty_ratio * (capacity / CACHE_BLOCK_SIZE) + 1) /
+                      (capacity / CACHE_BLOCK_SIZE);
+        ASSERT(dirty_ratio <= 1.0);
+      }
+      // p_debug << "Setting dirty bit: " << line.blocks.set_bits << " to " <<
+      // dirty_ratio << endl;
+      break;
+    default:
+      p_err << "Only VALID and DIRTY should be set through here" << endl;
+      ASSERT(false);
     }
   }
 
@@ -1271,30 +1382,31 @@ class Cache {
    */
   void clearBit(enum CacheBits bit, CacheLine &line) {
     switch (bit) {
-      case VALID:
-        // Should never clear a valid bit twice
-        ASSERT(line.valid == true);
-        line.valid = false;
-        break;
-      case DIRTY:
-        // Check if not already cleared, clear the bit and update the dirty ratio
-        if (line.dirty == true) {
-          line.dirty = false;
-          dirty_ratio = (dirty_ratio * (capacity / CACHE_BLOCK_SIZE) - 1) /
-                        (capacity / CACHE_BLOCK_SIZE);
-          ASSERT(dirty_ratio >= 0.0);
-        }
-        break;
-      case READ_DOMINATED:
-        line.read_dominated = false;
-        break;
-      case WRITE_DOMINATED:
-        //line.write_dominated = false;
-        ASSERT(false && "Write dominated bit no longer used, functionality merged into read_dominated and dirty bits");
-        break;
-      case POSSIBLE_WAR:
-        line.possible_war = false;
-        break;
+    case VALID:
+      // Should never clear a valid bit twice
+      ASSERT(line.valid == true);
+      line.valid = false;
+      break;
+    case DIRTY:
+      // Check if not already cleared, clear the bit and update the dirty ratio
+      if (line.dirty == true) {
+        line.dirty = false;
+        dirty_ratio = (dirty_ratio * (capacity / CACHE_BLOCK_SIZE) - 1) /
+                      (capacity / CACHE_BLOCK_SIZE);
+        ASSERT(dirty_ratio >= 0.0);
+      }
+      break;
+    case READ_DOMINATED:
+      line.read_dominated = false;
+      break;
+    case WRITE_DOMINATED:
+      // line.write_dominated = false;
+      ASSERT(false && "Write dominated bit no longer used, functionality "
+                      "merged into read_dominated and dirty bits");
+      break;
+    case POSSIBLE_WAR:
+      line.possible_war = false;
+      break;
     }
   }
 
@@ -1341,12 +1453,12 @@ class Cache {
    */
   void normalNVMAccess(enum HookMemory::memory_type type, address_t size) {
     switch (type) {
-      case HookMemory::MEM_READ:
-        stats.incNonCacheNVMReads(size);
-        break;
-      case HookMemory::MEM_WRITE:
-        stats.incNonCacheNVMWrites(size);
-        break;
+    case HookMemory::MEM_READ:
+      stats.incNonCacheNVMReads(size);
+      break;
+    case HookMemory::MEM_WRITE:
+      stats.incNonCacheNVMWrites(size);
+      break;
     }
   }
 };
